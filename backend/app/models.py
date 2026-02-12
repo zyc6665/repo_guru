@@ -90,6 +90,12 @@ class QuizItem(BaseModel):
     explanation: str
 
 
+class QuizChapter(BaseModel):
+    """一个章节的题目集合。"""
+    title: str = Field(description="章节标题，如「项目概述与定位」")
+    questions: list[QuizItem] = Field(min_length=2, max_length=5)
+
+
 class QuizOutput(BaseModel):
-    """LLM 生成的问答题集合。"""
-    questions: list[QuizItem] = Field(min_length=5, max_length=5)
+    """LLM 生成的分章节问答题集合。"""
+    chapters: list[QuizChapter] = Field(min_length=4, max_length=6)

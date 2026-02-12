@@ -25,6 +25,11 @@ export interface QuizQuestion {
   explanation: string;
 }
 
+export interface QuizChapter {
+  title: string;
+  questions: QuizQuestion[];
+}
+
 export interface StepStatus {
   step: string;
   status: "pending" | "running" | "done";
