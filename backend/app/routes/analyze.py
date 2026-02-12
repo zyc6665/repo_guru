@@ -7,12 +7,21 @@ from fastapi.responses import StreamingResponse
 
 from app.agent.graph import build_graph
 from app.agent.state import AgentState
+from app.services import github_client as gh
 
 router = APIRouter()
 
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# ---- 轻量搜索：返回候选仓库列表，不走 Agent ----
+
+@router.get("/search")
+async def search_repos(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20)):
+    repos = await gh.search_repos(q, limit=limit)
+    return {"results": repos}
 
 
 @router.get("/analyze")
