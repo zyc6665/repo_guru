@@ -8,12 +8,13 @@ from app.agent.state import AgentState
 from app.models import FileSelection, AnalysisOutput, QuizOutput
 
 
-def _llm() -> ChatOpenAI:
+def _llm(max_tokens: int = 4096) -> ChatOpenAI:
     return ChatOpenAI(
         model=settings.openai_model,
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         temperature=0.3,
+        max_tokens=max_tokens,
     )
 
 
@@ -146,7 +147,7 @@ async def fetch_files_node(state: AgentState) -> AgentState:
 # Node 5: analyze — 结构化分析（with_structured_output）
 # ---------------------------------------------------------------------------
 
-_ANALYZE_PROMPT = """You are a senior software architect and technical educator writing a textbook-level deep analysis of a GitHub repository. Your analysis should be thorough, specific, and educational — like a chapter from "Architecture of Open Source Applications".
+_ANALYZE_PROMPT = """You are a senior software architect writing a concise but insightful technical blog post analyzing a GitHub repository.
 
 ## Repository: {full_name}
 **Description:** {description}
@@ -166,61 +167,52 @@ _ANALYZE_PROMPT = """You are a senior software architect and technical educator 
 
 ---
 
-Provide a comprehensive, textbook-quality analysis:
+IMPORTANT: Keep each field CONCISE. Use Markdown formatting (###, bold, `inline code`, code blocks, > blockquotes). Avoid excessive length — quality over quantity.
 
-1. **summary**: Write a detailed 5-8 sentence overview. Cover: what problem it solves, target users, core value proposition, how it differs from alternatives, and its position in the ecosystem.
+1. **summary**: 4-6 sentence introduction. What problem does this project solve? What makes it architecturally interesting? Why should a developer care?
 
-2. **tech_stack**: List ALL key technologies with version info if available. Group by category mentally (runtime, framework, database, tooling, testing, deployment).
+2. **tech_stack**: List key technologies as short strings (e.g. "Python 3.10+", "FastAPI", "React 18"). No prose, just the list.
 
-3. **architecture_mermaid**: Mermaid `graph TD` diagram (8-15 nodes, A[Label] format, --> arrows, no quotes or special chars in IDs). Show data flow, component relationships, and external dependencies.
+3. **architecture_mermaid**: Mermaid `graph TD` diagram (6-10 nodes, A[Label] format, --> arrows, no quotes or special chars in IDs).
 
-4. **design_patterns**: List EVERY design pattern and architectural pattern you can identify. For each: pattern name + specific file/module where it's applied + WHY the author chose this pattern over alternatives. Be precise — cite actual class/function names.
+4. **design_patterns**: List 3-5 patterns. Each item: one sentence naming the pattern + where it's used + why it matters.
 
-5. **core_modules**: Write a textbook-style breakdown in Markdown. For EACH core module:
-   - **Responsibility**: What it does and why it exists as a separate module
-   - **Public API**: Key functions/classes/interfaces exposed
-   - **Internal mechanics**: How it works internally (algorithms, data structures, state management)
-   - **Dependencies**: What it depends on and what depends on it
-   - **Error handling**: How failures are managed
-   Use concrete file paths and function names.
+5. **core_modules**: For each core module (3-5 modules), write ONE paragraph covering: what it does, how it works, key design decisions. Use ### headings. Include `functionName()` and `FileName.ext` references.
 
-6. **code_highlights**: Pick 5-8 code snippets that demonstrate excellent engineering. For each:
-   - File path and line context
-   - The code snippet (in markdown code block with language tag)
-   - **Technique explained**: What pattern/technique is used
-   - **Why it's elegant**: What makes this implementation noteworthy
-   - **Learning takeaway**: What a developer can apply to their own projects
+6. **code_highlights**: Pick 3-4 noteworthy code snippets. For each: a brief context sentence, the code in a markdown code block, and 1-2 sentences explaining why it's worth reading. End each with `> **Takeaway:**` blockquote.
 
-7. **design_philosophy**: Write a thorough essay (at least 4 paragraphs) analyzing:
-   - **Architectural vision**: The overarching design philosophy and guiding principles
-   - **Key trade-offs**: What was sacrificed for what gain (e.g., simplicity vs flexibility, performance vs readability)
-   - **Extensibility strategy**: How the codebase is designed to accommodate future changes
-   - **Error handling philosophy**: Defensive vs optimistic, fail-fast vs graceful degradation
-   - **Developer experience**: How the codebase treats its contributors (naming conventions, documentation, testing strategy)
-   - **What could be improved**: Honest assessment of potential weaknesses or areas for enhancement"""
+7. **design_philosophy**: 2-3 paragraphs covering: architectural vision, key trade-offs, and one honest critique of what could be improved."""
 
 
 async def analyze_node(state: AgentState) -> AgentState:
     """使用 with_structured_output 生成结构化分析，杜绝手动 JSON 解析。"""
     info = state.get("repo_info", {})
-    llm = _llm().with_structured_output(AnalysisOutput)
+    llm = _llm(max_tokens=8192).with_structured_output(AnalysisOutput)
 
     prompt = _ANALYZE_PROMPT.format(
         full_name=info.get("full_name", ""),
         description=info.get("description", ""),
         language=info.get("language", ""),
         stars=info.get("stars", 0),
-        readme=state.get("readme", "N/A")[:6000],
-        file_tree=state.get("file_tree", "N/A")[:3000],
-        dependencies=state.get("dependencies", "N/A")[:2000],
-        key_files_content=state.get("key_files_content", "N/A")[:8000],
+        readme=state.get("readme", "N/A")[:4000],
+        file_tree=state.get("file_tree", "N/A")[:2000],
+        dependencies=state.get("dependencies", "N/A")[:1500],
+        key_files_content=state.get("key_files_content", "N/A")[:6000],
     ) + _lang_instruction(state.get("lang", "en"))
 
     try:
         result: AnalysisOutput = await llm.ainvoke(prompt)
         analysis = result.model_dump()
     except Exception as e:
-        analysis = {"summary": f"Analysis failed: {e}", "tech_stack": [], "architecture_mermaid": ""}
+        analysis = {
+            "summary": f"分析失败: {e}",
+            "tech_stack": [],
+            "architecture_mermaid": "",
+            "design_patterns": [],
+            "core_modules": "",
+            "code_highlights": "",
+            "design_philosophy": "",
+        }
 
     return {**state, "analysis": analysis, "current_step": "analyze"}
 
@@ -273,7 +265,7 @@ async def quiz_node(state: AgentState) -> AgentState:
     """使用 with_structured_output 生成分章节问答题。"""
     info = state.get("repo_info", {})
     analysis = state.get("analysis", {})
-    llm = _llm().with_structured_output(QuizOutput)
+    llm = _llm(max_tokens=8192).with_structured_output(QuizOutput)
 
     prompt = _QUIZ_PROMPT.format(
         full_name=info.get("full_name", ""),
