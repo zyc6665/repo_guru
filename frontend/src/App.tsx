@@ -1,25 +1,75 @@
 import { useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import SearchBar from "@/components/SearchBar";
+import RepoList from "@/components/RepoList";
 import StepProgress from "@/components/StepProgress";
 import AnalysisPanel from "@/components/AnalysisPanel";
 import QuizPanel from "@/components/QuizPanel";
 import { useSSE } from "@/hooks/use-sse";
 import type { RepoInfo, AnalysisResult, QuizQuestion, StepStatus } from "@/types";
 
+/** 判断输入是否为 URL 或 owner/repo 格式 */
+function isDirectRepo(query: string): boolean {
+  const q = query.trim();
+  return /github\.com\//.test(q) || /^[^/\s]+\/[^/\s]+$/.test(q);
+}
+
 export default function App() {
-  const [sseUrl, setSseUrl] = useState<string | null>(null);
   const [lang, setLang] = useState<"zh" | "en">("zh");
-  const { events, isDone, error } = useSSE(sseUrl);
 
-  const isLoading = sseUrl !== null && !isDone && !error;
+  // 搜索阶段
+  const [searchResults, setSearchResults] = useState<RepoInfo[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
-  const handleSearch = useCallback((query: string) => {
-    const encoded = encodeURIComponent(query);
+  // 分析阶段
+  const [sseUrl, setSseUrl] = useState<string | null>(null);
+  const { events, isDone, error: sseError } = useSSE(sseUrl);
+
+  const isAnalyzing = sseUrl !== null && !isDone && !sseError;
+
+  // 搜索关键词 → 展示候选列表
+  const handleSearch = useCallback(async (query: string) => {
+    // 重置状态
+    setSearchResults([]);
+    setSearchError("");
+    setSseUrl(null);
+
+    // URL 或 owner/repo → 直接分析
+    if (isDirectRepo(query)) {
+      const encoded = encodeURIComponent(query.trim());
+      setSseUrl(`/api/analyze?query=${encoded}&lang=${lang}`);
+      return;
+    }
+
+    // 关键词 → 搜索候选
+    setSearching(true);
+    try {
+      const resp = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      if (!resp.ok) throw new Error(`搜索失败 (${resp.status})`);
+      const data = await resp.json();
+      const repos = data.results as RepoInfo[];
+      if (!repos.length) {
+        setSearchError(`未找到与「${query}」相关的项目`);
+      } else {
+        setSearchResults(repos);
+      }
+    } catch (e: unknown) {
+      setSearchError(e instanceof Error ? e.message : "搜索出错");
+    } finally {
+      setSearching(false);
+    }
+  }, [lang]);
+
+  // 选择某个仓库 → 开始深度分析
+  const handleSelectRepo = useCallback((repo: RepoInfo) => {
+    setSearchResults([]);
+    setSearchError("");
+    const encoded = encodeURIComponent(repo.full_name);
     setSseUrl(`/api/analyze?query=${encoded}&lang=${lang}`);
   }, [lang]);
 
-  // Derive state from SSE events
+  // 从 SSE 事件中派生状态
   const { steps, repoInfo, analysis, quiz } = useMemo(() => {
     const steps: Record<string, StepStatus["status"]> = {};
     let repoInfo: RepoInfo | null = null;
@@ -41,6 +91,7 @@ export default function App() {
   }, [events]);
 
   const hasSteps = Object.keys(steps).length > 0;
+  const displayError = searchError || sseError;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -63,22 +114,35 @@ export default function App() {
         <div className="text-center space-y-2 mb-4">
           <h1 className="text-2xl font-bold">GitHub 项目智能分析</h1>
           <p className="text-sm text-muted-foreground">
-            输入项目关键词或链接，AI 为你解读代码库
+            输入关键词搜索项目，或直接粘贴 GitHub 链接进行深度分析
           </p>
         </div>
 
-        <SearchBar onSearch={handleSearch} isLoading={isLoading} />
+        <SearchBar onSearch={handleSearch} isLoading={searching || isAnalyzing} />
 
         {/* Error */}
         <AnimatePresence>
-          {error && (
+          {displayError && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center"
             >
-              {error}
+              {displayError}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* 搜索结果列表 */}
+        <AnimatePresence>
+          {searchResults.length > 0 && !sseUrl && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+            >
+              <RepoList repos={searchResults} onSelect={handleSelectRepo} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -114,7 +178,7 @@ export default function App() {
         </AnimatePresence>
 
         {/* Loading skeleton */}
-        {isLoading && !analysis && hasSteps && (
+        {isAnalyzing && !analysis && hasSteps && (
           <div className="space-y-3 animate-pulse">
             <div className="h-4 bg-muted rounded w-3/4" />
             <div className="h-4 bg-muted rounded w-1/2" />
@@ -125,7 +189,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-border px-6 py-3 text-center text-xs text-muted-foreground">
-        RepoGuru — Powered by LangGraph + OpenAI
+        RepoGuru — Powered by LangGraph + DeepSeek
       </footer>
     </div>
   );
