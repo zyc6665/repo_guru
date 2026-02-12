@@ -37,12 +37,14 @@ def parse_github_url(url: str) -> tuple[str, str] | None:
     return None
 
 
-async def search_repos(query: str, limit: int = 5) -> list[dict]:
+async def search_repos(query: str, limit: int = 12, page: int = 1) -> dict:
     async with httpx.AsyncClient(timeout=15) as client:
-        data = await _get(client, f"{BASE_URL}/search/repositories", {"q": query, "per_page": limit, "sort": "stars"})
+        data = await _get(client, f"{BASE_URL}/search/repositories", {
+            "q": query, "per_page": limit, "page": page, "sort": "stars",
+        })
         if not data or "items" not in data:
-            return []
-        return [
+            return {"items": [], "total_count": 0}
+        items = [
             {
                 "name": r["name"],
                 "full_name": r["full_name"],
@@ -53,6 +55,7 @@ async def search_repos(query: str, limit: int = 5) -> list[dict]:
             }
             for r in data["items"]
         ]
+        return {"items": items, "total_count": data.get("total_count", 0)}
 
 
 async def get_repo_info(owner: str, repo: str) -> Optional[dict]:

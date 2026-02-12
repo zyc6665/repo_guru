@@ -19,9 +19,18 @@ def _sse(event: str, data: dict) -> str:
 # ---- 轻量搜索：返回候选仓库列表，不走 Agent ----
 
 @router.get("/search")
-async def search_repos(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20)):
-    repos = await gh.search_repos(q, limit=limit)
-    return {"results": repos}
+async def search_repos(
+    q: str = Query(..., min_length=1),
+    page: int = Query(1, ge=1),
+    limit: int = Query(12, ge=1, le=30),
+):
+    data = await gh.search_repos(q, limit=limit, page=page)
+    return {
+        "results": data["items"],
+        "total_count": data["total_count"],
+        "page": page,
+        "has_more": page * limit < data["total_count"],
+    }
 
 
 @router.get("/analyze")
