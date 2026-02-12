@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Link } from "react-router-dom";
 import SearchBar from "@/components/SearchBar";
 import RepoList from "@/components/RepoList";
 import StepProgress from "@/components/StepProgress";
@@ -129,10 +130,10 @@ export default function App() {
     <div className="min-h-screen flex flex-col">
       {/* Header */}
       <header className="border-b border-border px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
           <span className="text-xl">🧠</span>
           <span className="font-bold text-lg tracking-tight">RepoGuru</span>
-        </div>
+        </Link>
         <button
           onClick={() => setLang((l) => (l === "zh" ? "en" : "zh"))}
           className="px-3 py-1 text-xs rounded-full border border-border hover:bg-accent transition-colors"
