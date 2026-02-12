@@ -9,17 +9,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@radix-ui/react-scroll-area": "^1.2.0",
+    "@radix-ui/react-slot": "^1.1.0",
+    "@radix-ui/react-tabs": "^1.1.1",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.11.0",
+    "lucide-react": "^0.447.0",
+    "mermaid": "^11.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "framer-motion": "^11.11.0",
-    "mermaid": "^11.2.0",
-    "clsx": "^2.1.1",
-    "tailwind-merge": "^2.5.3",
-    "class-variance-authority": "^0.7.0",
-    "lucide-react": "^0.447.0",
-    "@radix-ui/react-tabs": "^1.1.1",
-    "@radix-ui/react-scroll-area": "^1.2.0",
-    "@radix-ui/react-slot": "^1.1.0"
+    "react-router-dom": "^7.13.0",
+    "tailwind-merge": "^2.5.3"
   },
   "devDependencies": {
     "@types/react": "^18.3.11",
