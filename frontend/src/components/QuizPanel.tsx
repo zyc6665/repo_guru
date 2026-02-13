@@ -5,9 +5,10 @@ import type { QuizChapter } from "@/types";
 
 interface QuizPanelProps {
   chapters: QuizChapter[];
+  isGenerating?: boolean;
 }
 
-export default function QuizPanel({ chapters }: QuizPanelProps) {
+export default function QuizPanel({ chapters, isGenerating }: QuizPanelProps) {
   const [chapterIdx, setChapterIdx] = useState(0);
   const [questionIdx, setQuestionIdx] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
@@ -96,6 +97,11 @@ export default function QuizPanel({ chapters }: QuizPanelProps) {
             </button>
           );
         })}
+        {isGenerating && (
+          <span className="px-3 py-1.5 text-xs rounded-lg border border-dashed border-muted-foreground/30 text-muted-foreground/50 animate-pulse">
+            加载中...
+          </span>
+        )}
       </div>
 
       {/* 进度条 */}

@@ -286,12 +286,30 @@ function Markdown({ content }: { content: string }) {
 /* ------------------------------------------------------------------ */
 /*  Main component                                                     */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/*  Skeleton placeholder for sections not yet loaded                    */
+/* ------------------------------------------------------------------ */
+function SectionSkeleton() {
+  return (
+    <div className="space-y-3 animate-pulse">
+      <div className="h-4 bg-muted rounded w-3/4" />
+      <div className="h-4 bg-muted rounded w-1/2" />
+      <div className="h-24 bg-muted rounded" />
+      <div className="h-4 bg-muted rounded w-2/3" />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main component                                                     */
+/* ------------------------------------------------------------------ */
 interface AnalysisPanelProps {
   repoInfo: RepoInfo | null;
   analysis: AnalysisResult | null;
+  isAnalyzing?: boolean;
 }
 
-export default function AnalysisPanel({ repoInfo, analysis }: AnalysisPanelProps) {
+export default function AnalysisPanel({ repoInfo, analysis, isAnalyzing }: AnalysisPanelProps) {
   const [activeSection, setActiveSection] = useState("summary");
   const contentRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -325,7 +343,13 @@ export default function AnalysisPanel({ repoInfo, analysis }: AnalysisPanelProps
     }
   };
 
-  if (!analysis) return null;
+  // 至少有 repoInfo 或部分 analysis 数据就渲染
+  const hasAnyData = analysis && (
+    analysis.summary || analysis.tech_stack?.length || analysis.architecture_mermaid ||
+    analysis.core_modules || analysis.code_highlights || analysis.design_philosophy
+  );
+
+  if (!hasAnyData && !isAnalyzing) return null;
 
   return (
     <motion.div
@@ -393,38 +417,44 @@ export default function AnalysisPanel({ repoInfo, analysis }: AnalysisPanelProps
             <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
               <span>📋</span> 项目概述
             </h2>
-            <Markdown content={analysis.summary || ""} />
+            {analysis?.summary ? (
+              <>
+                <Markdown content={analysis.summary} />
 
-            {/* Tech stack badges */}
-            {analysis.tech_stack && analysis.tech_stack.length > 0 && (
-              <div className="mt-6">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">技术栈</h3>
-                <div className="flex flex-wrap gap-2">
-                  {analysis.tech_stack.map((tech) => (
-                    <span
-                      key={tech}
-                      className="px-3 py-1.5 text-xs rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/20 font-medium"
-                    >
-                      {tech}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Design patterns */}
-            {analysis.design_patterns && analysis.design_patterns.length > 0 && (
-              <div className="mt-6">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">设计模式</h3>
-                <div className="space-y-1">
-                  {analysis.design_patterns.map((p, i) => (
-                    <div key={i} className="flex gap-3 pl-2 py-0.5">
-                      <span className="text-violet-400 shrink-0 mt-[2px]">•</span>
-                      <span className="text-foreground/80 text-[15px]">{formatInline(p)}</span>
+                {/* Tech stack badges */}
+                {analysis.tech_stack && analysis.tech_stack.length > 0 && (
+                  <div className="mt-6">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">技术栈</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {analysis.tech_stack.map((tech) => (
+                        <span
+                          key={tech}
+                          className="px-3 py-1.5 text-xs rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/20 font-medium"
+                        >
+                          {tech}
+                        </span>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </div>
+                )}
+
+                {/* Design patterns */}
+                {analysis.design_patterns && analysis.design_patterns.length > 0 && (
+                  <div className="mt-6">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">设计模式</h3>
+                    <div className="space-y-1">
+                      {analysis.design_patterns.map((p, i) => (
+                        <div key={i} className="flex gap-3 pl-2 py-0.5">
+                          <span className="text-violet-400 shrink-0 mt-[2px]">•</span>
+                          <span className="text-foreground/80 text-[15px]">{formatInline(p)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <SectionSkeleton />
             )}
           </section>
 
@@ -435,24 +465,39 @@ export default function AnalysisPanel({ repoInfo, analysis }: AnalysisPanelProps
             <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
               <span>🏗️</span> 架构总览
             </h2>
-            {analysis.architecture_mermaid ? (
+            {analysis?.architecture_mermaid ? (
               <div className="rounded-lg border border-border/60 bg-zinc-950/50 p-4">
                 <MermaidDiagram chart={analysis.architecture_mermaid} />
               </div>
-            ) : (
+            ) : analysis?.core_modules ? (
               <p className="text-muted-foreground text-sm">暂无架构图</p>
+            ) : (
+              <SectionSkeleton />
             )}
           </section>
 
-          <hr className="border-border/40 my-8" />
-
-          {/* Section: 核心模块解析 */}
-          <section ref={(el) => { sectionRefs.current["modules"] = el; }} className="mb-10">
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-              <span>🔬</span> 核心模块解析
-            </h2>
-            <Markdown content={analysis.core_modules || ""} />
-          </section>
+          {/* 核心模块（架构维度的一部分） */}
+          {analysis?.core_modules ? (
+            <>
+              <hr className="border-border/40 my-8" />
+              <section ref={(el) => { sectionRefs.current["modules"] = el; }} className="mb-10">
+                <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+                  <span>🔬</span> 核心模块解析
+                </h2>
+                <Markdown content={analysis.core_modules} />
+              </section>
+            </>
+          ) : !analysis?.architecture_mermaid && (
+            <>
+              <hr className="border-border/40 my-8" />
+              <section ref={(el) => { sectionRefs.current["modules"] = el; }} className="mb-10">
+                <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+                  <span>🔬</span> 核心模块解析
+                </h2>
+                <SectionSkeleton />
+              </section>
+            </>
+          )}
 
           <hr className="border-border/40 my-8" />
 
@@ -461,7 +506,11 @@ export default function AnalysisPanel({ repoInfo, analysis }: AnalysisPanelProps
             <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
               <span>💡</span> 值得一读的代码
             </h2>
-            <Markdown content={analysis.code_highlights || ""} />
+            {analysis?.code_highlights ? (
+              <Markdown content={analysis.code_highlights} />
+            ) : (
+              <SectionSkeleton />
+            )}
           </section>
 
           <hr className="border-border/40 my-8" />
@@ -471,7 +520,11 @@ export default function AnalysisPanel({ repoInfo, analysis }: AnalysisPanelProps
             <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
               <span>🧭</span> 设计哲学
             </h2>
-            <Markdown content={analysis.design_philosophy || ""} />
+            {analysis?.design_philosophy ? (
+              <Markdown content={analysis.design_philosophy} />
+            ) : (
+              <SectionSkeleton />
+            )}
           </section>
 
           <hr className="border-border/40 my-8" />
@@ -482,7 +535,7 @@ export default function AnalysisPanel({ repoInfo, analysis }: AnalysisPanelProps
               <span>📁</span> 文件结构
             </h2>
             <pre className="p-4 rounded-lg bg-zinc-950 border border-border text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap font-mono overflow-auto">
-              {analysis.file_tree || "暂无文件结构"}
+              {analysis?.file_tree || "暂无文件结构"}
             </pre>
           </section>
         </div>

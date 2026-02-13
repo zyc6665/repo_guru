@@ -7,8 +7,10 @@ const STEPS = [
   { key: "retrieve", label: "概览" },
   { key: "select_files", label: "选文件" },
   { key: "fetch_files", label: "深读" },
-  { key: "analyze", label: "分析" },
-  { key: "generate_quiz", label: "出题" },
+  { key: "analyze_overview", label: "概述" },
+  { key: "analyze_architecture", label: "架构" },
+  { key: "analyze_code", label: "代码" },
+  { key: "analyze_philosophy", label: "哲学" },
 ];
 
 interface StepProgressProps {
