@@ -6,17 +6,15 @@ from app.agent.nodes import (
     retrieve_node,
     select_files_node,
     fetch_files_node,
-    analyze_node,
-    quiz_node,
 )
 
 
 def build_graph() -> StateGraph:
     """
-    工作流: search → retrieve → select_files → fetch_files → analyze → quiz
+    工作流: search → retrieve → select_files → fetch_files → END
 
-    Plan-and-Execute 模式体现在 select_files (Plan) + fetch_files (Execute):
-    LLM 先审视 file tree 决定要读哪些文件，再去拉取，避免把整个仓库塞进上下文。
+    4 个分析维度在路由层并发调用（asyncio.as_completed），不再走 graph。
+    Quiz 由独立的 POST /api/quiz 端点按需触发。
     """
     graph = StateGraph(AgentState)
 
@@ -24,8 +22,6 @@ def build_graph() -> StateGraph:
     graph.add_node("retrieve", retrieve_node)
     graph.add_node("select_files", select_files_node)
     graph.add_node("fetch_files", fetch_files_node)
-    graph.add_node("analyze", analyze_node)
-    graph.add_node("generate_quiz", quiz_node)
 
     graph.set_entry_point("search")
 
@@ -35,8 +31,6 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges("search", route_after_search, {END: END, "retrieve": "retrieve"})
     graph.add_edge("retrieve", "select_files")
     graph.add_edge("select_files", "fetch_files")
-    graph.add_edge("fetch_files", "analyze")
-    graph.add_edge("analyze", "generate_quiz")
-    graph.add_edge("generate_quiz", END)
+    graph.add_edge("fetch_files", END)
 
     return graph.compile()
