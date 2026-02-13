@@ -35,6 +35,11 @@ export interface StepStatus {
   status: "pending" | "running" | "done";
 }
 
+export interface AnalysisPartial {
+  section: "overview" | "architecture" | "code" | "philosophy";
+  data: Record<string, unknown>;
+}
+
 export type SSEEventType = "step" | "result" | "error" | "done";
 
 export interface SSEMessage {
