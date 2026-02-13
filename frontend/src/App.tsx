@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link } from "react-router-dom";
 import SearchBar from "@/components/SearchBar";
@@ -7,7 +7,41 @@ import StepProgress from "@/components/StepProgress";
 import AnalysisPanel from "@/components/AnalysisPanel";
 import QuizPanel from "@/components/QuizPanel";
 import { useSSE } from "@/hooks/use-sse";
-import type { RepoInfo, AnalysisResult, QuizChapter, StepStatus } from "@/types";
+import { useQuizSSE } from "@/hooks/use-quiz-sse";
+import type { RepoInfo, AnalysisResult, StepStatus, QuizChapter } from "@/types";
+
+// ---------------------------------------------------------------------------
+// sessionStorage 缓存
+// ---------------------------------------------------------------------------
+const CACHE_KEY = "repoguru_cache";
+
+interface AppCache {
+  searchResults: RepoInfo[];
+  searchQuery: string;
+  searchPage: number;
+  hasMore: boolean;
+  totalCount: number;
+  repoInfo: RepoInfo | null;
+  analysis: AnalysisResult | null;
+  quizChapters: QuizChapter[];
+  activeTab: "search" | "analysis" | "quiz";
+  lang: "zh" | "en";
+}
+
+function loadCache(): AppCache | null {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    return raw ? (JSON.parse(raw) as AppCache) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCache(cache: AppCache) {
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  } catch { /* quota exceeded — ignore */ }
+}
 
 /** 判断输入是否为 URL 或 owner/repo 格式 */
 function isDirectRepo(query: string): boolean {
@@ -16,22 +50,32 @@ function isDirectRepo(query: string): boolean {
 }
 
 export default function App() {
-  const [lang, setLang] = useState<"zh" | "en">("zh");
-  const [activeTab, setActiveTab] = useState<"search" | "analysis">("search");
+  const cached = useRef(loadCache()).current;
+
+  const [lang, setLang] = useState<"zh" | "en">(cached?.lang ?? "zh");
+  const [activeTab, setActiveTab] = useState<"search" | "analysis" | "quiz">(cached?.activeTab ?? "search");
 
   // 搜索阶段
-  const [searchResults, setSearchResults] = useState<RepoInfo[]>([]);
+  const [searchResults, setSearchResults] = useState<RepoInfo[]>(cached?.searchResults ?? []);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchPage, setSearchPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
-  const [totalCount, setTotalCount] = useState(0);
+  const [searchQuery, setSearchQuery] = useState(cached?.searchQuery ?? "");
+  const [searchPage, setSearchPage] = useState(cached?.searchPage ?? 1);
+  const [hasMore, setHasMore] = useState(cached?.hasMore ?? false);
+  const [totalCount, setTotalCount] = useState(cached?.totalCount ?? 0);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  // 缓存的分析/测验结果（从 sessionStorage 恢复）
+  const [savedRepoInfo, setSavedRepoInfo] = useState<RepoInfo | null>(cached?.repoInfo ?? null);
+  const [savedAnalysis, setSavedAnalysis] = useState<AnalysisResult | null>(cached?.analysis ?? null);
+  const [savedQuizChapters, setSavedQuizChapters] = useState<QuizChapter[]>(cached?.quizChapters ?? []);
 
   // 分析阶段
   const [sseUrl, setSseUrl] = useState<string | null>(null);
   const { events, isDone, error: sseError } = useSSE(sseUrl);
+
+  // Quiz 阶段
+  const quiz = useQuizSSE(savedQuizChapters);
 
   const isAnalyzing = sseUrl !== null && !isDone && !sseError;
 
@@ -101,30 +145,93 @@ export default function App() {
     setActiveTab("analysis");
   }, [lang]);
 
-  // 从 SSE 事件中派生状态
-  const { steps, repoInfo, analysis, quiz } = useMemo(() => {
+  // 从 SSE 事件中派生状态，支持 analysis_partial 增量合并
+  const { steps, repoInfo, analysis } = useMemo(() => {
     const steps: Record<string, StepStatus["status"]> = {};
     let repoInfo: RepoInfo | null = null;
     let analysis: AnalysisResult | null = null;
-    let quiz: QuizChapter[] = [];
 
     for (const ev of events) {
       if (ev.event === "step") {
         const { step, status } = ev.data as { step: string; status: StepStatus["status"] };
         steps[step] = status;
       } else if (ev.event === "result") {
-        const { type, data } = ev.data as { type: string; data: unknown };
+        const { type, data, section } = ev.data as { type: string; data: unknown; section?: string };
         if (type === "repo_info") repoInfo = data as RepoInfo;
-        if (type === "analysis") analysis = data as AnalysisResult;
-        if (type === "quiz") quiz = data as QuizChapter[];
+        if (type === "analysis_partial" && section) {
+          // 增量合并到 analysis 对象
+          if (!analysis) {
+            analysis = {
+              summary: "",
+              tech_stack: [],
+              architecture_mermaid: "",
+              file_tree: "",
+              design_patterns: [],
+              core_modules: "",
+              code_highlights: "",
+              design_philosophy: "",
+            };
+          }
+          analysis = { ...analysis, ...(data as Record<string, unknown>) } as AnalysisResult;
+        }
+        if (type === "analysis") {
+          // 最终完整 analysis（兼容）
+          analysis = data as AnalysisResult;
+        }
       }
     }
-    return { steps, repoInfo, analysis, quiz };
+    return { steps, repoInfo, analysis };
   }, [events]);
 
+  // 合并 SSE 实时数据与缓存数据（SSE 优先）
+  const displayRepoInfo = repoInfo || savedRepoInfo;
+  const displayAnalysis = analysis || savedAnalysis;
   const hasSteps = Object.keys(steps).length > 0;
   const displayError = searchError || sseError;
-  const hasAnalysis = sseUrl !== null;
+  const hasAnalysis = sseUrl !== null || savedAnalysis !== null;
+
+  // 分析完成 → 写入缓存 state
+  useEffect(() => {
+    if (isDone && analysis) {
+      setSavedAnalysis(analysis);
+      setSavedRepoInfo(repoInfo);
+    }
+  }, [isDone, analysis, repoInfo]);
+
+  // quiz 完成 → 写入缓存 state
+  useEffect(() => {
+    if (quiz.chapters.length > 0 && !quiz.isGenerating) {
+      setSavedQuizChapters(quiz.chapters);
+    }
+  }, [quiz.chapters, quiz.isGenerating]);
+
+  // 持久化到 sessionStorage
+  useEffect(() => {
+    saveCache({
+      searchResults,
+      searchQuery,
+      searchPage,
+      hasMore,
+      totalCount,
+      repoInfo: displayRepoInfo,
+      analysis: displayAnalysis,
+      quizChapters: quiz.chapters.length > 0 ? quiz.chapters : savedQuizChapters,
+      activeTab,
+      lang,
+    });
+  }, [searchResults, searchQuery, searchPage, hasMore, totalCount,
+      displayRepoInfo, displayAnalysis, quiz.chapters, savedQuizChapters,
+      activeTab, lang]);
+
+  // Quiz 生成触发
+  const handleGenerateQuiz = useCallback(() => {
+    if (!displayAnalysis || !displayRepoInfo) return;
+    quiz.generate(
+      displayAnalysis as unknown as Record<string, unknown>,
+      { full_name: displayRepoInfo.full_name } as Record<string, unknown>,
+      lang,
+    );
+  }, [displayAnalysis, displayRepoInfo, lang, quiz.generate]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -167,7 +274,7 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* Tabs */}
+        {/* Tabs — 3 个 */}
         <div className="flex rounded-lg bg-muted/50 p-1 border border-border">
           <button
             onClick={() => setActiveTab("search")}
@@ -195,6 +302,24 @@ export default function App() {
             📊 分析
             {isAnalyzing && (
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab("quiz")}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium rounded-md transition-all relative ${
+              activeTab === "quiz"
+                ? "bg-background text-primary shadow-sm"
+                : "text-muted-foreground hover:text-primary/70"
+            }`}
+          >
+            🎯 测验
+            {quiz.isGenerating && (
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />
+            )}
+            {quiz.chapters.length > 0 && !quiz.isGenerating && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">
+                {quiz.chapters.length}
+              </span>
             )}
           </button>
         </div>
@@ -253,31 +378,101 @@ export default function App() {
 
               {hasSteps && <StepProgress steps={steps} />}
 
-              {analysis && (
-                <>
-                  <AnalysisPanel repoInfo={repoInfo} analysis={analysis} />
-                  {quiz.length > 0 && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.2 }}
-                      className="rounded-xl border border-border bg-card p-5"
-                    >
-                      <h3 className="font-semibold mb-4 flex items-center gap-2">
-                        <span>🎯</span> 知识问答
-                      </h3>
-                      <QuizPanel chapters={quiz} />
-                    </motion.div>
-                  )}
-                </>
+              {(displayAnalysis || (isAnalyzing && displayRepoInfo)) && (
+                <AnalysisPanel repoInfo={displayRepoInfo} analysis={displayAnalysis} isAnalyzing={isAnalyzing} />
               )}
 
-              {isAnalyzing && !analysis && hasSteps && (
+              {isAnalyzing && !displayAnalysis && !displayRepoInfo && hasSteps && (
                 <div className="space-y-3 animate-pulse">
                   <div className="h-4 bg-muted rounded w-3/4" />
                   <div className="h-4 bg-muted rounded w-1/2" />
                   <div className="h-32 bg-muted rounded" />
                 </div>
+              )}
+            </motion.div>
+          </AnimatePresence>
+        )}
+
+        {/* Tab: 测验 */}
+        {activeTab === "quiz" && (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key="quiz-tab"
+              initial={{ opacity: 0, x: 10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 10 }}
+              transition={{ duration: 0.15 }}
+              className="space-y-6"
+            >
+              {/* 未分析 → 提示先分析 */}
+              {!displayAnalysis && !isAnalyzing && (
+                <div className="text-center py-16 text-muted-foreground text-sm">
+                  请先完成项目分析，再生成测验题
+                </div>
+              )}
+
+              {/* 分析中 → 提示等待 */}
+              {isAnalyzing && !displayAnalysis && (
+                <div className="text-center py-16 text-muted-foreground text-sm">
+                  分析进行中，完成后即可生成测验...
+                </div>
+              )}
+
+              {/* 已分析，未出题 → "生成测验"按钮 */}
+              {displayAnalysis && quiz.chapters.length === 0 && !quiz.isGenerating && (
+                <div className="text-center py-12 space-y-4">
+                  <p className="text-muted-foreground text-sm">
+                    分析已完成，点击下方按钮生成测验题
+                  </p>
+                  <button
+                    onClick={handleGenerateQuiz}
+                    className="px-6 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors"
+                  >
+                    🎯 生成测验
+                  </button>
+                </div>
+              )}
+
+              {/* 出题中 → 进度条 */}
+              {quiz.isGenerating && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                    <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-violet-500 rounded-full transition-all duration-500"
+                        style={{ width: `${(quiz.progress.current / quiz.progress.total) * 100}%` }}
+                      />
+                    </div>
+                    <span>{quiz.progress.current}/{quiz.progress.total} 章节</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Quiz 错误 */}
+              {quiz.error && (
+                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center">
+                  {quiz.error}
+                </div>
+              )}
+
+              {/* 已出题（含逐章加载中） → QuizPanel */}
+              {quiz.chapters.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="rounded-xl border border-border bg-card p-5"
+                >
+                  <h3 className="font-semibold mb-4 flex items-center gap-2">
+                    <span>🎯</span> 知识问答
+                    {quiz.isGenerating && (
+                      <span className="text-xs text-muted-foreground font-normal">
+                        (生成中 {quiz.progress.current}/{quiz.progress.total})
+                      </span>
+                    )}
+                  </h3>
+                  <QuizPanel chapters={quiz.chapters} isGenerating={quiz.isGenerating} />
+                </motion.div>
               )}
             </motion.div>
           </AnimatePresence>
